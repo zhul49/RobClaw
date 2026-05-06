@@ -1,0 +1,6 @@
+# Don't commit weight files — they're large and DINOv3 weights are gated.
+# Place dinov3_vits16_pretrain_lvd1689m-08c60483.pth (or similar) here.
+# Request access at:
+#   https://ai.meta.com/resources/models-and-libraries/dinov3-downloads/
+*
+!.gitignore

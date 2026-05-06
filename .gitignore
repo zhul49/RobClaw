@@ -1,0 +1,33 @@
+# Outputs (auto-generated, large)
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Large binary artifacts
+*.pkl
+*.mp4
+*.pth
+*.npz
+
+# Backup files
+*.bak
+
+# DINOv3 — symlink to personal machine, weights are gated
+v2/third_party/
+v2/weights/*
+!v2/weights/.gitignore
+
+# Environment
+.env
