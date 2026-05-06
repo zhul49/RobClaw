@@ -1,8 +1,31 @@
-open3d==0.16.0
-omegaconf
-opencv-python
-hydra-core
-openai
+# Pip-installable dependencies for v2/. Install with:
+#   pip install -r v2/requirements.txt
+#
+# These need separate setup, not via pip:
+#   - LIBERO       — clone https://github.com/Lifelong-Robot-Learning/LIBERO and install editable
+#   - cuRobo       — follow https://curobo.org/get_started/1_install_instructions.html
+#   - DINOv3 (opt) — gated download from Meta, see top-level README
+
+# Numerics
+numpy
+scipy
+scikit-learn
+numba
+
+# Torch + clustering / interpolation
 torch
 kmeans_pytorch
+
+# Vision / IO
+opencv-python
+matplotlib
+open3d
+imageio
+
+# VLM + HTTP service
+openai
+requests
+
+# Config + parsing
+PyYAML
 parse
