@@ -37,6 +37,12 @@ Suppose you are controlling a robot to perform manipulation tasks by writing con
       - 1 path constraints: "the robot must still be grasping the bouquet stem"
 - Summarize keypoints to be grasped in all grasping stages by defining the `grasp_keypoints` variable.
 - Summarize at the end of which stage the robot should release the keypoints by defining the `release_keypoints` variable.
+- For each stage, specify the gripper approach direction by defining the `approach_directions` variable. Choose one of:
+    - "top_down": gripper approaches from above with fingers pointing down (e.g., picking up an object on a table, dropping into a basket or bowl).
+    - "horizontal": gripper approaches from the side with fingers closing around a vertical structure (e.g., grasping a door knob, drawer handle, vertical bottle).
+    - "object_aligned": gripper approaches along the held/target object's primary axis (e.g., grasping a long tool laid flat, slotting a peg into a hole).
+    - "free": no specific orientation — use only when the task is symmetric and any approach works.
+  Most tabletop pick-and-place tasks should use "top_down" for every stage. The length of `approach_directions` must equal `num_stages`.
 
 **Note:**
 - Each constraint takes a dummy end-effector point and a set of keypoints as input and returns a numerical cost, where the constraint is satisfied if the cost is smaller than or equal to zero.
@@ -101,6 +107,12 @@ The length of the list should be equal to the number of stages.
 If a keypoint is to be released at the end of a stage, write the keypoint index at the corresponding location. Otherwise, write -1.
 """
 release_keypoints = [?, ..., ?]
+
+"""
+Per-stage gripper approach direction. One of: "top_down", "horizontal", "object_aligned", "free".
+The length of the list should be equal to the number of stages. Default to "top_down" for tabletop pick-and-place.
+"""
+approach_directions = [?, ..., ?]
 
 ```
 

@@ -1,49 +1,13 @@
-"""
-Phase 2 Step 1.2 — build a real SDF for the LIBERO scene.
-
-Approach: LIBERO provides per-object box collision proxies (each "main"
-body has 1 visual mesh + many boxes that together approximate the
-object's shape). We use ONLY the boxes — no trimesh, no mesh-SDF — and
-compute the signed distance to the nearest box at every voxel.
-
-Output: dict of
-    {
-      "bounds_min": (3,) float,
-      "bounds_max": (3,) float,
-      "voxel_size": float,
-      "shape": (nx, ny, nz),
-      "sdf_full":         (nx, ny, nz)  # all obstacles
-      "sdf_per_body": {                  # one SDF excluding each holdable body
-          body_name: (nx, ny, nz),
-          ...
-      },
-      "boxes_per_body": { body_name: list of box dicts }   # for diagnostics
-    }
-
-Step 1.4 (held-object exclusion) consumes `sdf_per_body` directly: when
-holding `alphabet_soup_1_main`, use sdf_per_body["alphabet_soup_1_main"];
-otherwise use sdf_full.
-
-Cache strategy: pickle the dict to outputs/v2_<suite>_<task>/sdf_cache.pkl.
-Key by suite/task. Recompute when bounds/voxel_size change.
-
-Usage:
-    from build_sdf import build_sdf_for_env
-    cache = build_sdf_for_env(env, suite="libero_object", task=0)
-"""
+"""Build a voxel SDF for the LIBERO scene from per-body box collision proxies.
+Output (per task): sdf_full + sdf_per_body[name] (the latter excludes a held body's geoms).
+Cached to outputs/v2_<suite>_<task>/sdf_cache.pkl."""
 import os
 import pickle
 import time
 import numpy as np
 
 
-# Bodies whose geoms can be excluded from the SDF when held by the gripper.
-# Currently just "alphabet_soup_1_main" (kp0 = the can to grasp). Add others
-# if/when other tasks need them. Bodies NOT in this list are always treated
-# as static obstacles.
-HOLDABLE_BODIES = {"alphabet_soup_1_main"}
-
-# Bodies to skip entirely from the SDF (robot, world fixtures).
+HOLDABLE_BODIES = {"alphabet_soup_1_main", "milk_1_main"}
 SKIP_BODY_PREFIXES = ("robot0", "gripper0", "world", "table", "floor", "wall", "mount")
 
 DEFAULT_BOUNDS_MIN = np.array([-0.40, -0.50, 0.00])
@@ -52,26 +16,20 @@ DEFAULT_VOXEL_SIZE = 0.02
 
 
 def _enumerate_obstacle_boxes(sim):
-    """Walk every geom in the sim and return the obstacle box list grouped by body.
-
-    We use only boxes — the meshes in LIBERO are visual-only (textured_vis),
-    the boxes are the collision proxies. Skipping meshes is a 5-mesh
-    optimization that drops the SDF compute from "minutes" to "seconds".
-    """
+    # Boxes are the collision proxies; meshes are visual-only. Skipping meshes
+    # is what gets the SDF build down from minutes to seconds.
     boxes_per_body = {}
     skipped_meshes = 0
     for i in range(sim.model.ngeom):
         body_id = int(sim.model.geom_bodyid[i])
         body_name = sim.model.body_id2name(body_id)
-        if body_name is None:
-            continue
-        if any(body_name.startswith(p) for p in SKIP_BODY_PREFIXES):
+        if body_name is None or any(body_name.startswith(p) for p in SKIP_BODY_PREFIXES):
             continue
         gtype = int(sim.model.geom_type[i])
-        if gtype == 7:  # mesh — skip, boxes provide collision shape
+        if gtype == 7:
             skipped_meshes += 1
             continue
-        if gtype != 6:  # box — for now only boxes; if we hit cylinders/spheres later, extend
+        if gtype != 6:
             print(f"[build_sdf] WARNING: skipping geom {i} '{sim.model.geom_id2name(i)}' "
                   f"(body '{body_name}', type={gtype}) — non-box not yet supported")
             continue
@@ -86,47 +44,20 @@ def _enumerate_obstacle_boxes(sim):
 
 
 def _box_sdf_grid(grid_xyz, box_pos, box_rotmat, half_size):
-    """Vectorized signed-distance from a grid of points to one oriented box.
-
-    Args:
-        grid_xyz: (N, 3) world-frame points (we'll reshape outside).
-        box_pos: (3,) box center in world frame.
-        box_rotmat: (3, 3) world←box rotation; columns are box's local axes in world frame.
-        half_size: (3,) box half-extents along its local axes.
-
-    Returns:
-        (N,) signed distance per point. Negative inside the box, zero on
-        surface, positive outside.
-
-    SDF formula (standard for an oriented box):
-        p_local = R^T (p_world - box_pos)
-        q = |p_local| - half_size
-        sdf = ||max(q, 0)|| + min(max(q), 0)
-    The first term handles "outside in some axes", the second handles "inside in all axes".
-    """
-    delta = grid_xyz - box_pos                              # (N, 3) world-frame offset
-    p_local = delta @ box_rotmat                             # (N, 3) box-local; R^T·v = v·R
-    q = np.abs(p_local) - half_size                          # (N, 3)
-    outside_norm = np.linalg.norm(np.maximum(q, 0.0), axis=-1)  # (N,)
-    inside_max = np.minimum(np.max(q, axis=-1), 0.0)            # (N,)
-    return outside_norm + inside_max
+    """Standard oriented-box SDF. Negative inside, positive outside."""
+    p_local = (grid_xyz - box_pos) @ box_rotmat
+    q = np.abs(p_local) - half_size
+    return np.linalg.norm(np.maximum(q, 0.0), axis=-1) + np.minimum(np.max(q, axis=-1), 0.0)
 
 
 def _compute_sdf_over_grid(grid_xyz, boxes_per_body, exclude_bodies=()):
-    """Compute SDF over a grid by taking the min over all boxes (excluding any in `exclude_bodies`).
-
-    Boxes are processed body-by-body and the per-cell minimum is updated
-    incrementally — much more memory-efficient than stacking all per-box
-    distance fields and reducing.
-    """
     sdf = np.full(grid_xyz.shape[0], np.inf)
     n_boxes_used = 0
     for body_name, boxes in boxes_per_body.items():
         if body_name in exclude_bodies:
             continue
         for box in boxes:
-            d = _box_sdf_grid(grid_xyz, box["pos"], box["rotmat"], box["half_size"])
-            sdf = np.minimum(sdf, d)
+            sdf = np.minimum(sdf, _box_sdf_grid(grid_xyz, box["pos"], box["rotmat"], box["half_size"]))
             n_boxes_used += 1
     return sdf, n_boxes_used
 
@@ -137,12 +68,6 @@ def build_sdf_for_env(env, suite, task,
                        voxel_size=DEFAULT_VOXEL_SIZE,
                        cache_path=None,
                        force_rebuild=False):
-    """Build the SDF for the current env, caching to disk.
-
-    Returns the cache dict (see module docstring for shape). The dict has
-    `sdf_full` (all obstacles) plus `sdf_per_body[body_name]` (excluding
-    that body's geoms — used when the body is held by the gripper).
-    """
     bounds_min = np.asarray(bounds_min, dtype=np.float64)
     bounds_max = np.asarray(bounds_max, dtype=np.float64)
 
@@ -154,7 +79,6 @@ def build_sdf_for_env(env, suite, task,
     if not force_rebuild and os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             cache = pickle.load(f)
-        # Validate cache parameters match request — recompute if bounds/voxel changed.
         if (np.allclose(cache["bounds_min"], bounds_min)
                 and np.allclose(cache["bounds_max"], bounds_max)
                 and abs(cache["voxel_size"] - voxel_size) < 1e-9):
@@ -169,8 +93,6 @@ def build_sdf_for_env(env, suite, task,
     print(f"[build_sdf]   {len(boxes_per_body)} bodies, {n_boxes} boxes "
           f"(skipped {skipped_meshes} mesh visuals)")
 
-    # Build the voxel grid. nx/ny/nz are cell counts; cell centers are at
-    # bounds_min + (i + 0.5) * voxel_size etc.
     nx = int(np.ceil((bounds_max[0] - bounds_min[0]) / voxel_size))
     ny = int(np.ceil((bounds_max[1] - bounds_min[1]) / voxel_size))
     nz = int(np.ceil((bounds_max[2] - bounds_min[2]) / voxel_size))
@@ -182,14 +104,13 @@ def build_sdf_for_env(env, suite, task,
     gx, gy, gz = np.meshgrid(xs, ys, zs, indexing="ij")
     grid_xyz = np.stack([gx, gy, gz], axis=-1).reshape(-1, 3)
 
-    # Full SDF (everything is an obstacle)
+    # Flip sign — calculate_collision_cost expects positive-inside SDF (upstream ReKep does the same).
     print(f"[build_sdf] computing sdf_full...")
     t0 = time.perf_counter()
     sdf_flat, n_used = _compute_sdf_over_grid(grid_xyz, boxes_per_body)
-    sdf_full = sdf_flat.reshape(nx, ny, nz)
+    sdf_full = (-sdf_flat).reshape(nx, ny, nz)
     print(f"[build_sdf]   sdf_full: {n_used} boxes evaluated, {time.perf_counter()-t0:.1f}s")
 
-    # Per-holdable-body SDF: exclude that body's boxes
     sdf_per_body = {}
     for body_name in HOLDABLE_BODIES:
         if body_name not in boxes_per_body:
@@ -199,7 +120,7 @@ def build_sdf_for_env(env, suite, task,
         sdf_flat, n_used = _compute_sdf_over_grid(
             grid_xyz, boxes_per_body, exclude_bodies={body_name},
         )
-        sdf_per_body[body_name] = sdf_flat.reshape(nx, ny, nz)
+        sdf_per_body[body_name] = (-sdf_flat).reshape(nx, ny, nz)
         print(f"[build_sdf]   sdf_excluding[{body_name}]: {n_used} boxes, "
               f"{time.perf_counter()-t0:.1f}s")
 
@@ -212,7 +133,7 @@ def build_sdf_for_env(env, suite, task,
         "shape": (nx, ny, nz),
         "sdf_full": sdf_full,
         "sdf_per_body": sdf_per_body,
-        "boxes_per_body": boxes_per_body,  # for visualization / debugging
+        "boxes_per_body": boxes_per_body,
     }
     with open(cache_path, "wb") as f:
         pickle.dump(cache, f)
@@ -221,14 +142,10 @@ def build_sdf_for_env(env, suite, task,
     return cache
 
 
-# ---------------------------------------------------------------------------
-# Standalone run: build the SDF and print a quick summary
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     os.environ["MUJOCO_GL"] = "egl"
     import sys
-    sys.path.insert(0, os.environ.get("LIBERO_PATH",
-                                      os.path.expanduser("~/LIBERO")))
+    sys.path.insert(0, os.environ.get("LIBERO_PATH", os.path.expanduser("~/LIBERO")))
     from libero.libero import benchmark
     from libero.libero.envs import OffScreenRenderEnv
 

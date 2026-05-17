@@ -234,8 +234,11 @@ def exec_safe(code_str, gvars=None, lvars=None):
 def load_functions_from_txt(txt_path, get_grasping_cost_fn):
     if txt_path is None:
         return []
-    # load txt file
-    with open(txt_path, 'r') as f:
+    # load txt file. Explicit UTF-8 — cuRobo's import chain has been
+    # observed to leave the process locale in a state where Python's
+    # default text-mode open() falls back to ASCII, and the stage 2
+    # subgoal constraint file contains UTF-8 characters.
+    with open(txt_path, 'r', encoding='utf-8') as f:
         functions_text = f.read()
     # execute functions
     gvars_dict = {

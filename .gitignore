@@ -1,6 +1,9 @@
 # Outputs (auto-generated, large)
 outputs/
 
+# Local dev scratch — diagnostics, probes, superseded modules, screenshots
+v2_dev/
+
 # Python
 __pycache__/
 *.pyc
@@ -23,6 +26,9 @@ venv/
 
 # Backup files
 *.bak
+
+# README — drafting locally, not ready to publish yet
+README.md
 
 # DINOv3 — symlink to personal machine, weights are gated
 v2/third_party/

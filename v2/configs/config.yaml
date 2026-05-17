@@ -75,7 +75,9 @@ path_solver:
   opt_interpolate_pos_step_size: 0.02  # controls the density of collision checking inside optimization
   opt_interpolate_rot_step_size: 0.10
   max_collision_points: 60
-  sampling_maxfun: 5000
+  # Was 5000 in upstream ReKep; reduced after cuRobo removal — without IK costs
+  # in the objective, fewer evals converge fine and runs faster.
+  sampling_maxfun: 1500
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   constraint_tolerance: 0.0001
@@ -85,7 +87,11 @@ path_solver:
 subgoal_solver:
   bounds_min: *bounds_min
   bounds_max: *bounds_max
-  sampling_maxfun: 5000
+  # Was 5000 upstream, bumped to 20000 in main2/run_full_task_v2 era when the
+  # 4-stage hover/grasp layout needed it. main3 uses 1500 + multi-restart
+  # (SUBGOAL_RESTARTS=3) instead of a single big budget — equivalent reliability,
+  # faster, lower per-eval cost since IK is gone.
+  sampling_maxfun: 1500
   max_collision_points: 60
   constraint_tolerance: 0.0001
   minimizer_options:

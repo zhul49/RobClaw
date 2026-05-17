@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import time
 import copy
@@ -12,6 +13,8 @@ from utils import (
     farthest_point_sampling,
     consistency,
 )
+
+GRASP_COST_WEIGHT = float(os.environ.get("REKEP_GRASP_COST_WEIGHT", "10.0"))
 
 def objective(opt_vars,
             og_bounds,
@@ -44,31 +47,18 @@ def objective(opt_vars,
     debug_dict['init_pose_cost'] = init_pose_cost
     cost += init_pose_cost
 
-    # reachability cost by approximating by number of IK iterations
-    max_iterations = 20
-    ik_result = ik_solver.solve(
-                    opt_pose_homo,
-                    max_iterations=max_iterations,
-                    initial_joint_pos=initial_joint_pos,
-                )
-    ik_cost = 20.0 * (ik_result.num_descents / max_iterations)
-    debug_dict['ik_feasible'] = ik_result.success
-    debug_dict['ik_pos_error'] = ik_result.position_error
-    debug_dict['ik_cost'] = ik_cost
-    cost += ik_cost
-    if ik_result.success:
-        reset_reg = np.linalg.norm(ik_result.cspace_position[:-1] - reset_joint_pos[:-1])
-        reset_reg = np.clip(reset_reg, 0.0, 3.0)
-    else:
-        reset_reg = 3.0
-    reset_reg_cost = 0.2 * reset_reg
-    debug_dict['reset_reg_cost'] = reset_reg_cost
-    cost += reset_reg_cost
+    # Reachability + reset-regularizer costs removed with cuRobo. OSC solves IK
+    # at runtime; planning-time IK validation is redundant. Debug keys kept as
+    # zeros so the _check_opt_result ik_feasible probe stays harmless.
+    debug_dict['ik_feasible'] = True
+    debug_dict['ik_pos_error'] = 0.0
+    debug_dict['ik_cost'] = 0.0
+    debug_dict['reset_reg_cost'] = 0.0
 
     if is_grasp_stage:
         preferred_dir = np.array([0, 0, -1])
         grasp_cost = -np.dot(opt_pose_homo[:3, 2], preferred_dir) + 1  # [0, 2]
-        grasp_cost = 10.0 * grasp_cost
+        grasp_cost = GRASP_COST_WEIGHT * grasp_cost
         debug_dict['grasp_cost'] = grasp_cost
         cost += grasp_cost
 
@@ -140,7 +130,11 @@ class SubgoalSolver:
         x = bm[0] + (np.arange(nx) + 0.5) * vs[0]
         y = bm[1] + (np.arange(ny) + 0.5) * vs[1]
         z = bm[2] + (np.arange(nz) + 0.5) * vs[2]
-        sdf_func = RegularGridInterpolator((x, y, z), sdf_voxels, bounds_error=False, fill_value=0)
+        # fill_value=-1.0: treat outside-grid as empty space. Cell-center convention leaves
+        # a half-voxel dead-zone inside bounds_min/max where the interpolator returns its
+        # fill_value. With fill_value=0 and threshold=0.05, points in the dead-zone register
+        # as phantom collisions.
+        sdf_func = RegularGridInterpolator((x, y, z), sdf_voxels, bounds_error=False, fill_value=-1.0)
         return sdf_func
 
     def _check_opt_result(self, opt_result, debug_dict):
@@ -272,7 +266,5 @@ class SubgoalSolver:
         sol = unnormalize_vars(opt_result.x, og_bounds)
         sol = np.concatenate([sol[:3], T.euler2quat(sol[3:])])
         opt_result = self._check_opt_result(opt_result, debug_dict)
-        # cache opt_result for future use if successful
-        if opt_result.success:
-            self.last_opt_result = copy.deepcopy(opt_result)
+        self.last_opt_result = copy.deepcopy(opt_result)
         return sol, debug_dict
