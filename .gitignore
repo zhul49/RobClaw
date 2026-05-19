@@ -1,6 +1,9 @@
 # Outputs (auto-generated, large)
 outputs/
 
+# Deoxys writes logs/ to cwd at runtime
+logs/
+
 # Local dev scratch — diagnostics, probes, superseded modules, screenshots
 v2_dev/
 
