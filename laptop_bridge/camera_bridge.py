@@ -79,8 +79,7 @@ class CameraBridge:
             if res is None:
                 continue
             bgr, depth = res
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            ok, jpg = cv2.imencode(".jpg", rgb, [cv2.IMWRITE_JPEG_QUALITY, config.CAMERA_JPEG_QUALITY])
+            ok, jpg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, config.CAMERA_JPEG_QUALITY])
             if not ok:
                 continue
             s.seq += 1
