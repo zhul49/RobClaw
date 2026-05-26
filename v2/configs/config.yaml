@@ -1,5 +1,5 @@
 device: &device 'cuda'
-seed: &seed 0
+seed: &seed 42
 
 main:
   interpolate_pos_step_size: &interpolate_pos_step_size 0.05  # controls the density of the final returned path

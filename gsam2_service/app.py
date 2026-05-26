@@ -12,6 +12,7 @@ from torchvision.ops import box_convert
 # Grounded-SAM-2 demo imports
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 from grounding_dino.groundingdino.util.inference import load_model, predict
 
 SAM2_CHECKPOINT = "./checkpoints/sam2.1_hiera_large.pt"
@@ -31,12 +32,14 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # -----------------------
 app = FastAPI()
 
+sam2_model = None                    # kept for SAM2AutomaticMaskGenerator construction
 sam2_predictor: SAM2ImagePredictor | None = None
+sam2_auto_generator: SAM2AutomaticMaskGenerator | None = None
 grounding_model = None
 
 
 def _ensure_models_loaded() -> None:
-    global sam2_predictor, grounding_model
+    global sam2_model, sam2_predictor, sam2_auto_generator, grounding_model
     if sam2_predictor is not None and grounding_model is not None:
         return
 
@@ -61,9 +64,20 @@ def _ensure_models_loaded() -> None:
     # Inference-only
     torch.set_grad_enabled(False)
 
-    # Build SAM2 predictor
+    # Build SAM2 predictor (text-prompted) AND automatic mask generator (paper-style "all masks")
     sam2_model = build_sam2(SAM2_MODEL_CONFIG, SAM2_CHECKPOINT, device=DEVICE)
     sam2_predictor = SAM2ImagePredictor(sam2_model)
+    # Defaults tuned to match SAM-everything: 32x32 point grid, IoU thr 0.8.
+    # min_mask_region_area=100 drops tiny noise blobs that the proposer would
+    # later cluster into nothing useful.
+    sam2_auto_generator = SAM2AutomaticMaskGenerator(
+        model=sam2_model,
+        points_per_side=32,
+        pred_iou_thresh=0.8,
+        stability_score_thresh=0.95,
+        min_mask_region_area=100,
+        output_mode="binary_mask",
+    )
 
     # Build GroundingDINO model
     grounding_model = load_model(
@@ -303,6 +317,73 @@ async def predict_all_masks(
     # use | as separator since labels can contain commas/semicolons
     headers["X-Labels"] = "|".join(str(l) for l in labels_list)
 
+    return Response(content=_mask_to_png_bytes(multi_mask),
+                    media_type="image/png", headers=headers)
+
+
+@app.post("/predict_automatic_masks")
+async def predict_automatic_masks(
+    image: UploadFile = File(...),
+    points_per_side: int = Form(32),
+    pred_iou_thresh: float = Form(0.8),
+    stability_score_thresh: float = Form(0.95),
+    min_mask_region_area: int = Form(100),
+):
+    """
+    SAM-everything: no text prompt, no boxes. Tiles a point grid across the
+    image and returns every mask SAM2 produces. Used by the paper-faithful
+    keypoint proposer (ReKep paper Section A.5).
+
+    Returns single-channel PNG, pixel value n = nth mask (1-indexed), 0 = bg.
+    Sorted largest-first so smaller masks win overlap (paint largest last).
+    Up to 254 masks. Headers: X-Detections (count), X-Areas (comma-separated).
+    """
+    _ensure_models_loaded()
+    assert sam2_auto_generator is not None
+
+    # Allow per-request overrides without rebuilding the generator if the
+    # caller asks for the defaults. Otherwise build a temp generator —
+    # rebuilds are cheap because the underlying SAM2 weights are already on GPU.
+    gen = sam2_auto_generator
+    use_defaults = (
+        points_per_side == 32 and pred_iou_thresh == 0.8
+        and stability_score_thresh == 0.95 and min_mask_region_area == 100
+    )
+    if not use_defaults:
+        gen = SAM2AutomaticMaskGenerator(
+            model=sam2_model,
+            points_per_side=int(points_per_side),
+            pred_iou_thresh=float(pred_iou_thresh),
+            stability_score_thresh=float(stability_score_thresh),
+            min_mask_region_area=int(min_mask_region_area),
+            output_mode="binary_mask",
+        )
+
+    data = await image.read()
+    bgr = _decode_image_to_bgr(data)
+    image_source = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    with torch.inference_mode(), _autocast_ctx():
+        results = gen.generate(image_source)
+
+    h, w, _ = image_source.shape
+    multi_mask = np.zeros((h, w), dtype=np.uint8)
+    headers = {"X-Detections": "0", "X-Areas": ""}
+    if not results:
+        return Response(content=_mask_to_png_bytes(multi_mask),
+                        media_type="image/png", headers=headers)
+
+    # Sort smallest-first so largest paints LAST and wins overlap. (We want
+    # smaller foreground masks to survive when nested inside larger ones.)
+    results = sorted(results, key=lambda r: int(r["area"]))
+    n_max = min(254, len(results))
+    results = results[:n_max]
+    for i, r in enumerate(results):
+        seg = r["segmentation"].astype(bool)
+        multi_mask[seg] = i + 1
+
+    headers["X-Detections"] = str(len(results))
+    headers["X-Areas"] = ",".join(str(int(r["area"])) for r in results)
     return Response(content=_mask_to_png_bytes(multi_mask),
                     media_type="image/png", headers=headers)
 

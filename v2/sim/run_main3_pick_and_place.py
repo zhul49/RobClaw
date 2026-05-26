@@ -1,8 +1,3 @@
-"""run_main3.py — thin CLI wrapper around Main3.
-
-  python run_main3.py                          # libero_object/0, default constraint dir
-  python run_main3.py --task 7 --constraint-dir <path>
-"""
 import os
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -11,14 +6,15 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+sys.path.insert(0, HERE)                                    # sibling imports inside sim/
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))  # 'v2.X.Y' resolution
 sys.path.insert(0, os.path.expanduser("~/LIBERO"))
 
-from main3 import Main3
+from v2.sim.main3 import Main3
 
 
 DEFAULT_CONSTRAINT_DIR = os.path.join(
-    HERE, "..", "outputs", "v2_libero_object_0", "constraints",
+    HERE, "..", "..", "outputs", "v2_libero_object_0", "constraints",
     "PATCHED_kp0_pick_up_the_alphabet_soup_and_place_it_in_the_basket",
 )
 

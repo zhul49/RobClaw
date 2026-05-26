@@ -79,7 +79,7 @@ class ConstraintGenerator:
                 raise ValueError(f"{k} not found in output")
             data_dict[k] = [int(x.strip()) for x in raw.replace("[", "").replace("]", "").split(",")]
 
-        # Optional; default top_down for every stage.
+        # we default top_down for every stage.
         raw = _find("approach_directions = {approach_directions}", "approach_directions")
         if raw is None:
             data_dict['approach_directions'] = ["top_down"] * data_dict['num_stages']

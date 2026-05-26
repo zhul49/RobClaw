@@ -9,15 +9,15 @@ import time
 import numpy as np
 import torch
 
-from libero_env_adapter import (
+from v2.sim.libero_env_adapter import (
     LIBEROReKepEnv,
     LIBERO_BOUNDS_MIN,
     LIBERO_BOUNDS_MAX,
 )
-from subgoal_solver import SubgoalSolver
-from path_solver2 import PathSolver
-import transform_utils as T
-from utils import (
+from v2.sim.subgoal_solver import SubgoalSolver
+from v2.sim.path_solver2 import PathSolver
+from v2.common import transform_utils as T
+from v2.common.utils import (
     get_config,
     get_callable_grasping_cost_fn,
     get_linear_interpolation_steps,
@@ -237,9 +237,7 @@ class Main3:
     def _execute_grasp_action(self, stage):
         pregrasp_pose = self.env.get_ee_pose()
         finger_pre = self.env.get_finger_qpos()
-        can_body = self.env._can_body_id
-        can_pre = (self.env.sim.data.body_xpos[can_body].copy()
-                   if can_body is not None else None)
+        can_pre = self.env.get_object_pose(0)
 
         # lunge along +Z by half grasp_depth to cancel the matching solve_subgoal
         # backoff so EE lands at the constraint optimum.
@@ -270,8 +268,7 @@ class Main3:
         self.env.mark_event(f"stage{stage}_post_grasp_lift")
 
         finger_post = self.env.get_finger_qpos()
-        can_post = (self.env.sim.data.body_xpos[can_body].copy()
-                    if can_body is not None else None)
+        can_post = self.env.get_object_pose(0)
         return {
             "finger_qpos_pre": finger_pre,
             "finger_qpos_post": finger_post,
@@ -297,8 +294,9 @@ class Main3:
 
     # synchronize the movable mask with the env's current grasp state.
     def _update_keypoint_movable_mask(self):
+        grasped = self.env.get_grasped_keypoints()
         for i in range(1, len(self.keypoint_movable_mask)):
-            self.keypoint_movable_mask[i] = ((i - 1) in self.env._grasped_indices)
+            self.keypoint_movable_mask[i] = ((i - 1) in grasped)
 
     # called everytime we begin or re-enter a stage
     def _update_stage(self, stage):

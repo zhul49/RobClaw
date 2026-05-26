@@ -3,12 +3,14 @@ os.environ['MUJOCO_GL'] = 'egl'
 
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
+V2_ROOT = os.path.dirname(HERE)
+PROJECT_ROOT = os.path.dirname(V2_ROOT)
 
 LIBERO_PATH = os.environ.get("LIBERO_PATH", os.path.expanduser("~/LIBERO"))
 
 sys.path.insert(0, LIBERO_PATH)
-sys.path.insert(0, HERE)
+sys.path.insert(0, HERE)                       # sibling imports inside sim/
+sys.path.insert(0, PROJECT_ROOT)               # 'v2.X.Y' resolution
 
 import argparse
 import time
@@ -21,9 +23,9 @@ import matplotlib.pyplot as plt
 
 from libero.libero import benchmark
 from libero.libero.envs import OffScreenRenderEnv
-from label_cleaner import (clean_label, extract_prompt_vocab,
-                           merge_detections_to_unique_regions,
-                           best_label_for_cluster)
+from v2.sim.label_cleaner import (clean_label, extract_prompt_vocab,
+                                  merge_detections_to_unique_regions,
+                                  best_label_for_cluster)
 
 
 # --- CLI --------------------------------------------------------------
@@ -228,8 +230,8 @@ t_3d = time.perf_counter()
 # --- KeypointProposer ---------------------------------
 print(f"\n[4/8] KeypointProposer...")
 os.chdir(HERE)
-from keypoint_proposal import KeypointProposer
-from utils import get_config
+from v2.sim.keypoint_proposal import KeypointProposer
+from v2.common.utils import get_config
 cfg = get_config(config_path="./configs/config.yaml")['keypoint_proposer']
 cfg['bounds_min'] = [-2.0, -2.0, -0.5]
 cfg['bounds_max'] = [ 2.0,  2.0,  2.0]
@@ -349,7 +351,7 @@ if not os.environ.get("OPENAI_API_KEY"):
             "No OpenAI API key found. Set the OPENAI_API_KEY env var or "
             f"create a key file at {key_file} (or set OPENAI_API_KEY_FILE)."
         )
-from constraint_generation import ConstraintGenerator
+from v2.sim.constraint_generation import ConstraintGenerator
 global_config = get_config(config_path="./configs/config.yaml")
 cg = ConstraintGenerator(global_config['constraint_generator'])
 cg.base_dir = CONSTRAINTS_DIR

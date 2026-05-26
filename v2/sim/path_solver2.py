@@ -4,8 +4,8 @@ from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 import copy
 import time
-import transform_utils as T
-from utils import (
+from v2.common import transform_utils as T
+from v2.common.utils import (
     farthest_point_sampling,
     get_linear_interpolation_steps,
     linear_interpolate_poses,
